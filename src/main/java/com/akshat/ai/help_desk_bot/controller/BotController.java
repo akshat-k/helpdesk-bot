@@ -30,7 +30,7 @@ public class BotController {
     private static final Logger log = LoggerFactory.getLogger(BotController.class);
 
     @Autowired
-    @Qualifier("AnthropicChatClient")
+    @Qualifier("BotChatClient")
     private ChatClient chatClient;
 
     @Autowired
@@ -62,9 +62,11 @@ public class BotController {
         // Username always comes from verified JWT — never from user input
         String username = jwtUserContext.getUsername(jwt);
         String fullName = jwtUserContext.getFullName(jwt);
+        String email = jwtUserContext.getEmail(jwt);
 
         log.debug("Chat request: conversationId='{}' username='{}' prompt='{}'",
                 conversationId, username, query);
+        botTools.registerEmail(username, email);
         // Register/update conversation with verified username
         conversationService.upsertConversation(conversationId, username);
 
