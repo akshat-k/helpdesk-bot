@@ -16,6 +16,7 @@ An intelligent IT support agent built with Spring Boot and Spring AI that helps 
 - [Running the Application](#running-the-application)
 - [API Reference](#api-reference)
 - [Authentication](#authentication)
+- [Email Notifications](#email-notifications)
 - [Memory & Conversation Management](#memory--conversation-management)
 - [Ticket Management](#ticket-management)
 - [Known Limitations](#known-limitations)
@@ -57,7 +58,7 @@ NovaDesk: "Ticket #1042 has been raised. Our team will pick it up shortly."
 ┌─────────────────────────────────────────────────────────────┐
 │                   Spring Boot App                           │
 │                                                             │
-│   BotController → ChatClient → LLM (Groq / Gemini)         │
+│   BotController → ChatClient → LLM (Groq llama-3.3-70b)    │
 │        │               │                                    │
 │        │         Spring AI Advisors                         │
 │        │         (Memory + Logger)                          │
@@ -69,12 +70,26 @@ NovaDesk: "Ticket #1042 has been raised. Our team will pick it up shortly."
 │              MySQL Database                                 │
 │     (tickets / chat_messages / conversations /              │
 │      conversation_summaries)                                │
-└─────────────────────────────────────────────────────────────┘
-                         │
+│                        │                                    │
+│        TicketEventProducer                                  │
+│                        │                                    │
+└────────────────────────┼────────────────────────────────────┘
                          ▼
               ┌──────────────────┐
-              │  Google OAuth2   │
-              │  (JWT Validation)│
+              │  Apache Kafka    │
+              │  (ticket-events) │
+              └────────┬─────────┘
+                       ▼
+              ┌──────────────────┐
+              │ TicketEvent      │
+              │ Consumer         │
+              │ + EmailService   │
+              │ (Thymeleaf HTML) │
+              └────────┬─────────┘
+                       ▼
+              ┌──────────────────┐
+              │  Gmail SMTP      │
+              │  Employee Inbox  │
               └──────────────────┘
 ```
 
@@ -84,12 +99,15 @@ NovaDesk: "Ticket #1042 has been raised. Our team will pick it up shortly."
 
 | Layer | Technology |
 |---|---|
-| Framework | Spring Boot 3.x |
+| Framework | Spring Boot 3.5 |
 | AI Orchestration | Spring AI 1.1.x |
-| LLM | Groq (llama-3.3-70b-versatile) or Google Gemini |
-| Database | MySQL |
+| LLM | Groq (llama-3.3-70b-versatile) |
+| Database | MySQL 8 |
 | ORM | Spring Data JPA / Hibernate |
 | Security | Spring Security + Google OAuth2 |
+| Messaging | Apache Kafka (KRaft mode — no Zookeeper) |
+| Email | Spring Mail + Thymeleaf HTML templates |
+| API Docs | Springdoc OpenAPI (Swagger UI) |
 | Build Tool | Maven |
 | Java Version | Java 21 |
 
@@ -102,10 +120,13 @@ NovaDesk: "Ticket #1042 has been raised. Our team will pick it up shortly."
 - **Analyst behavior** — probes vague descriptions, infers priority, auto-generates titles
 - **Full ticket lifecycle** — create, update, fetch by ID or username
 - **Persistent conversation memory** — full chat history stored in MySQL per conversation
-- **Conversation summarization** — older messages are summarized to keep token usage flat
+- **Conversation summarization** — older messages compressed to keep token usage flat
 - **Google SSO authentication** — only verified company email accounts can access
 - **Duplicate ticket prevention** — idempotency check before every create
 - **Conversation metadata** — tracks all sessions per user with timestamps
+- **Async email notifications** — Kafka-driven HTML emails on ticket create, update, resolve
+- **Swagger UI** — auto-generated API documentation
+- **Secret management** — all credentials loaded from environment variables, never hardcoded
 
 ---
 
@@ -116,37 +137,53 @@ src/
 ├── main/
 │   ├── java/com/akshat/ai/help_desk_bot/
 │   │   ├── config/
-│   │   │   ├── AiConfig.java              # ChatClient beans (main + summarization)
-│   │   │   └── SecurityConfig.java        # OAuth2 + JWT validation
+│   │   │   ├── AiConfig.java                    # ChatClient beans (main + summarization)
+│   │   │   ├── KafkaConfig.java                 # Kafka topics + listener factory
+│   │   │   └── SecurityConfig.java              # OAuth2 + JWT validation
 │   │   ├── controller/
-│   │   │   ├── BotController.java         # Main chat endpoint
-│   │   │   └── DevAuthController.java     # Dev-only Google login helper
+│   │   │   ├── BotController.java               # Main chat endpoint
+│   │   │   └── DevAuthController.java           # Dev-only Google login helper
 │   │   ├── entity/
-│   │   │   ├── Ticket.java                # Ticket JPA entity
-│   │   │   ├── ChatMessage.java           # Chat history entity
-│   │   │   └── Conversation.java          # Conversation metadata entity
+│   │   │   ├── Ticket.java                      # Ticket JPA entity
+│   │   │   ├── ChatMessage.java                 # Chat history entity
+│   │   │   ├── Conversation.java                # Conversation metadata entity
+│   │   │   └── ConversationSummary.java         # Summarization entity
 │   │   ├── enums/
-│   │   │   ├── Status.java                # OPEN, IN_PROGRESS, RESOLVED, CLOSED
-│   │   │   └── Priority.java              # LOW, MEDIUM, HIGH, URGENT
+│   │   │   ├── Status.java                      # OPEN, IN_PROGRESS, RESOLVED, CLOSED
+│   │   │   └── Priority.java                    # LOW, MEDIUM, HIGH, URGENT
+│   │   ├── event/
+│   │   │   └── TicketEvent.java                 # Kafka event DTO
+│   │   ├── kafka/
+│   │   │   ├── TicketEventProducer.java         # Publishes events to Kafka topics
+│   │   │   └── TicketEventConsumer.java         # Consumes events, triggers emails
 │   │   ├── memory/
-│   │   │   └── DatabaseChatMemory.java    # JPA-backed ChatMemory implementation
+│   │   │   └── DatabaseChatMemory.java          # JPA-backed ChatMemory implementation
 │   │   ├── repository/
 │   │   │   ├── TicketRepository.java
 │   │   │   ├── ChatMessageRepository.java
 │   │   │   ├── ConversationRepository.java
 │   │   │   └── ConversationSummaryRepository.java
 │   │   ├── security/
-│   │   │   └── JwtUserContext.java        # Extracts username/email from JWT
+│   │   │   └── JwtUserContext.java              # Extracts username/email from JWT
 │   │   ├── service/
 │   │   │   ├── HelpDeskService.java
 │   │   │   ├── HelpDeskServiceImpl.java
 │   │   │   ├── ConversationService.java
-│   │   │   └── ConversationSummarizationService.java
+│   │   │   ├── ConversationSummarizationService.java
+│   │   │   └── EmailService.java                # Thymeleaf email rendering + sending
 │   │   └── tools/
-│   │       └── BotTools.java              # Spring AI @Tool definitions
+│   │       └── BotTools.java                    # Spring AI @Tool definitions
 │   └── resources/
-│       ├── application.properties
-│       └── helpdesk-system.st             # System prompt for NovaDesk
+│       ├── application.properties               # Config with ${ENV_VAR} placeholders
+│       ├── helpdesk-system.st                   # System prompt for NovaDesk
+│       └── templates/
+│           └── email/
+│               ├── ticket-created.html          # HTML email — ticket created
+│               ├── ticket-updated.html          # HTML email — ticket updated
+│               └── ticket-resolved.html         # HTML email — ticket resolved
+├── .env                                         # Local secrets (never commit)
+├── .gitignore                                   # Must include .env
+└── docker-compose.yml                           # Kafka in KRaft mode
 ```
 
 ---
@@ -156,8 +193,10 @@ src/
 - Java 21+
 - Maven 3.8+
 - MySQL 8+
+- Docker (for Kafka)
 - A Google Cloud project with OAuth2 credentials
-- A Groq API key (free at [console.groq.com](https://console.groq.com))
+- A Groq API key — free at [console.groq.com](https://console.groq.com)
+- A Gmail account with an App Password generated
 
 ---
 
@@ -178,36 +217,122 @@ Tables are auto-created by Hibernate on first run (`spring.jpa.hibernate.ddl-aut
 3. Add authorized redirect URI: `http://localhost:9191/v1/auth/callback`
 4. Copy Client ID and Client Secret
 
-### 3. `application.properties`
+### 3. Gmail App Password
+
+1. Go to [myaccount.google.com](https://myaccount.google.com)
+2. Search **"App Passwords"**
+3. Type a name (e.g. `helpdesk-bot`) → Click **Create**
+4. Copy the 16-character password — remove spaces when pasting
+
+### 4. Kafka (Docker)
+
+```bash
+docker-compose up -d
+```
+
+`docker-compose.yml` (KRaft mode — no Zookeeper required):
+
+```yaml
+version: '3.8'
+services:
+  kafka:
+    image: confluentinc/cp-kafka:7.9.0
+    container_name: kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: true
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+```
+
+### 5. Environment Variables
+
+Create a `.env` file in the project root — **never commit this file**:
+
+```bash
+# Database
+DB_URL=jdbc:mysql://localhost:3306/helpdesk_bot
+DB_USERNAME=root
+DB_PASSWORD=yourpassword
+
+# LLM
+GROQ_API_KEY=your_groq_api_key
+
+# Google OAuth2
+GOOGLE_CLIENT_ID=your_google_client_id
+GOOGLE_CLIENT_SECRET=your_google_client_secret
+
+# Mail
+MAIL_USERNAME=your-email@gmail.com
+MAIL_PASSWORD=yourapppasword
+
+# App
+ALLOWED_DOMAIN=gmail.com
+AUTH_REDIRECT_URI=http://localhost:9191/v1/auth/callback
+SUPPORT_TEAM_EMAIL=your-email@gmail.com
+```
+
+### 6. `application.properties`
+
+No secrets — all values come from environment variables:
 
 ```properties
 # Server
 server.port=9191
+spring.profiles.active=dev
 
 # Database
-spring.datasource.url=jdbc:mysql://localhost:3306/helpdesk_bot
-spring.datasource.username=your_db_user
-spring.datasource.password=your_db_password
+spring.datasource.url=${DB_URL}
+spring.datasource.username=${DB_USERNAME}
+spring.datasource.password=${DB_PASSWORD}
 spring.jpa.hibernate.ddl-auto=update
 
 # LLM — Groq
-spring.ai.openai.api-key=your_groq_api_key
+spring.ai.openai.api-key=${GROQ_API_KEY}
 spring.ai.openai.base-url=https://api.groq.com/openai
 spring.ai.openai.chat.options.model=llama-3.3-70b-versatile
 spring.ai.openai.chat.options.max-tokens=500
 
 # Google OAuth2
-spring.security.oauth2.client.registration.google.client-id=your_google_client_id
-spring.security.oauth2.client.registration.google.client-secret=your_google_client_secret
+spring.security.oauth2.client.registration.google.client-id=${GOOGLE_CLIENT_ID}
+spring.security.oauth2.client.registration.google.client-secret=${GOOGLE_CLIENT_SECRET}
 spring.security.oauth2.client.registration.google.scope=openid,email,profile
 spring.security.oauth2.resourceserver.jwt.jwk-set-uri=https://www.googleapis.com/oauth2/v3/certs
 
-# Security
-app.security.allowed-domain=yourcompany.com
-app.auth.redirect-uri=http://localhost:9191/v1/auth/callback
+# Kafka
+spring.kafka.bootstrap-servers=localhost:9092
+app.kafka.topics.ticket-created=ticket-created
+app.kafka.topics.ticket-updated=ticket-updated
+app.kafka.topics.ticket-resolved=ticket-resolved
 
-# Active profile
-spring.profiles.active=dev
+# Mail
+spring.mail.host=smtp.gmail.com
+spring.mail.port=587
+spring.mail.username=${MAIL_USERNAME}
+spring.mail.password=${MAIL_PASSWORD}
+spring.mail.properties.mail.smtp.auth=true
+spring.mail.properties.mail.smtp.starttls.enable=true
+spring.mail.properties.mail.smtp.starttls.required=true
+
+# App
+app.security.allowed-domain=${ALLOWED_DOMAIN}
+app.auth.redirect-uri=${AUTH_REDIRECT_URI}
+app.mail.from=${MAIL_USERNAME}
+app.mail.support-team=${SUPPORT_TEAM_EMAIL}
+
+# Swagger
+springdoc.api-docs.path=/v3/api-docs
+springdoc.swagger-ui.path=/swagger-ui.html
+springdoc.swagger-ui.enabled=true
 ```
 
 ---
@@ -219,6 +344,9 @@ spring.profiles.active=dev
 git clone https://github.com/your-org/help-desk-bot.git
 cd help-desk-bot
 
+# Start Kafka
+docker-compose up -d
+
 # Build
 mvn clean install
 
@@ -229,6 +357,8 @@ mvn spring-boot:run -Dspring-boot.run.profiles=dev
 ---
 
 ## API Reference
+
+Swagger UI available at: `http://localhost:9191/swagger-ui.html`
 
 ### Chat
 
@@ -280,12 +410,40 @@ NovaDesk uses Google OAuth2. Your Spring Boot app acts as a **resource server** 
      "id_token": "eyJhbGci......",
      "usage": "Use this as: Authorization: Bearer <id_token>"
    }
-4. Use id_token as Bearer token in all API requests
+4. Use id_token as Bearer token in Postman — set under Authorization tab as Bearer Token
 ```
 
 ### Domain Restriction
 
-Only emails from `app.security.allowed-domain` are accepted. All others receive `401 Unauthorized`. Change this in `application.properties` to restrict access to your company email domain.
+Only emails from `ALLOWED_DOMAIN` are accepted. All others receive `401 Unauthorized`. Set this in your `.env` file to restrict access to your company email domain.
+
+---
+
+## Email Notifications
+
+NovaDesk sends HTML emails asynchronously via Kafka when:
+
+| Event | Email sent |
+|---|---|
+| Ticket created | Full ticket details — ID, title, description, priority, status, assignee |
+| Ticket updated | Latest ticket details after the update |
+| Ticket resolved | Confirmation with ticket ID and title |
+
+### Flow
+
+```
+Ticket action in BotTools
+        ↓
+TicketEventProducer → Kafka topic
+        ↓ (async — user gets API response immediately)
+TicketEventConsumer
+        ↓
+EmailService (Thymeleaf HTML rendering)
+        ↓
+Employee inbox (Gmail SMTP)
+```
+
+Emails are sent to the address from the employee's Google JWT (`email` claim) automatically — no manual email input needed.
 
 ---
 
@@ -293,9 +451,8 @@ Only emails from `app.security.allowed-domain` are accepted. All others receive 
 
 ### How memory works
 
-Every message is persisted to `chat_messages` table with `conversationId`, `role`, and `content`.
+Every message is persisted to `chat_messages` with `conversationId`, `role`, and `content`. On each request the bot receives:
 
-On each request, the bot receives:
 1. A **summary** of older messages (if conversation is long)
 2. The **last 6 messages** in full
 
@@ -303,18 +460,11 @@ This keeps token usage flat regardless of conversation length.
 
 ### Summarization
 
-After every 10 messages, a background summarization runs using a dedicated `ChatClient` (no memory advisor) that compresses older conversation history into a rolling summary stored in `conversation_summaries`.
+After every 10 messages, a dedicated summarization `ChatClient` (no memory advisor) compresses older history into a rolling summary stored in `conversation_summaries`. This summary is injected as a `SystemMessage` on subsequent requests.
 
 ### Cleanup
 
-A scheduled job runs daily at midnight to delete messages older than 30 days:
-
-```java
-@Scheduled(cron = "0 0 0 * * *")
-public void deleteOldMessages() { ... }
-```
-
-Enable scheduling by adding `@EnableScheduling` to your main application class.
+A scheduled job runs daily at midnight deleting messages older than 30 days. Enable it by adding `@EnableScheduling` to your main application class.
 
 ---
 
@@ -357,5 +507,7 @@ Before creating a ticket, the bot checks for an existing ticket with the same `u
 
 - Google `id_token` expires in **1 hour** — re-login required after expiry
 - Groq free tier: 1,000 requests/day, 12,000 tokens/minute
-- Summarization runs synchronously — on very long conversations the first response after the 10th message may be slightly slower
+- Gmail free tier: 500 emails/day — switch to SendGrid or AWS SES for production
+- Summarization adds slight latency on every 10th message in a conversation
 - `ConversationId` is client-provided — use a UUID generator on the frontend to ensure uniqueness
+- Kafka runs with replication factor 1 in local setup — increase to 3 for production
