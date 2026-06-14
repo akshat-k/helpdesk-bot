@@ -50,13 +50,14 @@ NovaDesk: "Ticket #1042 has been raised. Our team will pick it up shortly."
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                        Client                               │
-│              (Postman / Frontend / Mobile)                  │
+│                     React UI (Vite)                         │
+│              http://localhost:5173                           │
 └────────────────────────┬────────────────────────────────────┘
                          │ Bearer Token (Google JWT)
                          ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                   Spring Boot App                           │
+│                   http://localhost:9191                      │
 │                                                             │
 │   BotController → ChatClient → LLM (Groq llama-3.3-70b)    │
 │        │               │                                    │
@@ -77,7 +78,8 @@ NovaDesk: "Ticket #1042 has been raised. Our team will pick it up shortly."
                          ▼
               ┌──────────────────┐
               │  Apache Kafka    │
-              │  (ticket-events) │
+              │  (KRaft mode)    │
+              │  ticket-events   │
               └────────┬─────────┘
                        ▼
               ┌──────────────────┐
@@ -97,6 +99,7 @@ NovaDesk: "Ticket #1042 has been raised. Our team will pick it up shortly."
 
 ## Tech Stack
 
+### Backend
 | Layer | Technology |
 |---|---|
 | Framework | Spring Boot 3.5 |
@@ -105,11 +108,19 @@ NovaDesk: "Ticket #1042 has been raised. Our team will pick it up shortly."
 | Database | MySQL 8 |
 | ORM | Spring Data JPA / Hibernate |
 | Security | Spring Security + Google OAuth2 |
-| Messaging | Apache Kafka (KRaft mode — no Zookeeper) |
+| Messaging | Apache Kafka 4.x (KRaft — no Zookeeper) |
 | Email | Spring Mail + Thymeleaf HTML templates |
 | API Docs | Springdoc OpenAPI (Swagger UI) |
 | Build Tool | Maven |
 | Java Version | Java 21 |
+
+### Frontend
+| Layer | Technology |
+|---|---|
+| Framework | React + Vite |
+| Routing | React Router DOM |
+| Language | JavaScript |
+| Styling | CSS Variables (dark theme) |
 
 ---
 
@@ -125,6 +136,7 @@ NovaDesk: "Ticket #1042 has been raised. Our team will pick it up shortly."
 - **Duplicate ticket prevention** — idempotency check before every create
 - **Conversation metadata** — tracks all sessions per user with timestamps
 - **Async email notifications** — Kafka-driven HTML emails on ticket create, update, resolve
+- **React UI** — ChatGPT-style dark interface with sidebar, typing indicator, conversation history
 - **Swagger UI** — auto-generated API documentation
 - **Secret management** — all credentials loaded from environment variables, never hardcoded
 
@@ -132,17 +144,23 @@ NovaDesk: "Ticket #1042 has been raised. Our team will pick it up shortly."
 
 ## Project Structure
 
+### Backend
 ```
 src/
 ├── main/
 │   ├── java/com/akshat/ai/help_desk_bot/
 │   │   ├── config/
 │   │   │   ├── AiConfig.java                    # ChatClient beans (main + summarization)
+│   │   │   ├── CorsConfig.java                  # CORS configuration for UI
 │   │   │   ├── KafkaConfig.java                 # Kafka topics + listener factory
 │   │   │   └── SecurityConfig.java              # OAuth2 + JWT validation
 │   │   ├── controller/
 │   │   │   ├── BotController.java               # Main chat endpoint
 │   │   │   └── DevAuthController.java           # Dev-only Google login helper
+│   │   ├── dto/
+│   │   │   ├── ChatResponse.java                # Chat API response DTO
+│   │   │   ├── TicketRequest.java               # Ticket creation DTO
+│   │   │   └── TicketUpdateRequest.java         # Ticket update DTO
 │   │   ├── entity/
 │   │   │   ├── Ticket.java                      # Ticket JPA entity
 │   │   │   ├── ChatMessage.java                 # Chat history entity
@@ -178,18 +196,40 @@ src/
 │       ├── helpdesk-system.st                   # System prompt for NovaDesk
 │       └── templates/
 │           └── email/
-│               ├── ticket-created.html          # HTML email — ticket created
-│               ├── ticket-updated.html          # HTML email — ticket updated
-│               └── ticket-resolved.html         # HTML email — ticket resolved
+│               ├── ticket-created.html
+│               ├── ticket-updated.html
+│               └── ticket-resolved.html
 ├── .env                                         # Local secrets (never commit)
-├── .gitignore                                   # Must include .env
-└── docker-compose.yml                           # Kafka in KRaft mode
+├── .gitignore
+└── docker-compose.yml                           # Kafka KRaft mode
+```
+
+### Frontend
+```
+novadesk-ui/
+├── app/
+│   ├── routes/
+│   │   ├── _index.jsx          # Landing page with Google SSO button
+│   │   └── chat.jsx            # Main chat interface
+│   ├── components/
+│   │   ├── ChatMessage.jsx     # Message bubble component
+│   │   ├── ChatInput.jsx       # Input box + send button
+│   │   └── Sidebar.jsx         # Conversation history sidebar
+│   ├── utils/
+│   │   └── api.js              # All backend API calls
+│   ├── styles/
+│   │   └── global.css          # Dark theme CSS variables
+│   └── main.jsx                # React app entry point
+├── index.html
+├── vite.config.ts
+└── package.json
 ```
 
 ---
 
 ## Prerequisites
 
+### Backend
 - Java 21+
 - Maven 3.8+
 - MySQL 8+
@@ -197,6 +237,10 @@ src/
 - A Google Cloud project with OAuth2 credentials
 - A Groq API key — free at [console.groq.com](https://console.groq.com)
 - A Gmail account with an App Password generated
+
+### Frontend
+- Node.js 20+
+- npm
 
 ---
 
@@ -214,7 +258,8 @@ Tables are auto-created by Hibernate on first run (`spring.jpa.hibernate.ddl-aut
 
 1. Go to [console.cloud.google.com](https://console.cloud.google.com)
 2. Create a project → APIs & Services → Credentials → OAuth 2.0 Client ID
-3. Add authorized redirect URI: `http://localhost:9191/v1/auth/callback`
+3. Add authorized redirect URIs:
+    - `http://localhost:9191/v1/auth/callback`
 4. Copy Client ID and Client Secret
 
 ### 3. Gmail App Password
@@ -227,36 +272,31 @@ Tables are auto-created by Hibernate on first run (`spring.jpa.hibernate.ddl-aut
 ### 4. Kafka (Docker)
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
-`docker-compose.yml` (KRaft mode — no Zookeeper required):
+`docker-compose.yml` (KRaft mode — Kafka 4.x, no Zookeeper):
 
 ```yaml
-version: '3.8'
 services:
   kafka:
-    image: confluentinc/cp-kafka:7.9.0
+    image: apache/kafka:4.1.0
     container_name: kafka
     ports:
       - "9092:9092"
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: true
-      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
 ```
 
-### 5. Environment Variables
+### 5. Backend Environment Variables
 
-Create a `.env` file in the project root — **never commit this file**:
+Create `.env` in the backend project root — **never commit this file**:
 
 ```bash
 # Database
@@ -300,7 +340,8 @@ spring.jpa.hibernate.ddl-auto=update
 spring.ai.openai.api-key=${GROQ_API_KEY}
 spring.ai.openai.base-url=https://api.groq.com/openai
 spring.ai.openai.chat.options.model=llama-3.3-70b-versatile
-spring.ai.openai.chat.options.max-tokens=500
+spring.ai.openai.chat.options.max-tokens=1000
+spring.ai.openai.chat.options.temperature=0.3
 
 # Google OAuth2
 spring.security.oauth2.client.registration.google.client-id=${GOOGLE_CLIENT_ID}
@@ -310,6 +351,14 @@ spring.security.oauth2.resourceserver.jwt.jwk-set-uri=https://www.googleapis.com
 
 # Kafka
 spring.kafka.bootstrap-servers=localhost:9092
+spring.kafka.producer.key-serializer=org.apache.kafka.common.serialization.StringSerializer
+spring.kafka.producer.value-serializer=org.springframework.kafka.support.serializer.JsonSerializer
+spring.kafka.producer.properties.spring.json.add.type.headers=true
+spring.kafka.consumer.group-id=helpdesk-email-group
+spring.kafka.consumer.key-deserializer=org.apache.kafka.common.serialization.StringDeserializer
+spring.kafka.consumer.value-deserializer=org.springframework.kafka.support.serializer.JsonDeserializer
+spring.kafka.consumer.auto-offset-reset=earliest
+spring.kafka.consumer.properties.spring.json.trusted.packages=com.akshat.ai.help_desk_bot.event
 app.kafka.topics.ticket-created=ticket-created
 app.kafka.topics.ticket-updated=ticket-updated
 app.kafka.topics.ticket-resolved=ticket-resolved
@@ -333,32 +382,50 @@ app.mail.support-team=${SUPPORT_TEAM_EMAIL}
 springdoc.api-docs.path=/v3/api-docs
 springdoc.swagger-ui.path=/swagger-ui.html
 springdoc.swagger-ui.enabled=true
+
+# Logging
+logging.level.org.springframework.ai.chat.client.advisor=DEBUG
+logging.level.com.akshat.ai.help_desk_bot=DEBUG
+```
+
+### 7. Frontend Environment Variables
+
+Create `.env` in `novadesk-ui/`:
+
+```bash
+VITE_API_URL=http://localhost:9191
 ```
 
 ---
 
 ## Running the Application
 
+### Backend
+
 ```bash
-# Clone the repo
-git clone https://github.com/your-org/help-desk-bot.git
-cd help-desk-bot
-
 # Start Kafka
-docker-compose up -d
+docker compose up -d
 
-# Build
+# Build and run
 mvn clean install
-
-# Run with dev profile (enables /v1/auth/login endpoint)
 mvn spring-boot:run -Dspring-boot.run.profiles=dev
 ```
+
+### Frontend
+
+```bash
+cd novadesk-ui
+npm install
+npm run dev
+```
+
+Open `http://localhost:5173` — click **Continue with Google** to log in.
 
 ---
 
 ## API Reference
 
-Swagger UI available at: `http://localhost:9191/swagger-ui.html`
+Swagger UI: `http://localhost:9191/swagger-ui.html`
 
 ### Chat
 
@@ -375,7 +442,7 @@ Swagger UI available at: `http://localhost:9191/swagger-ui.html`
 | Method | Endpoint | Description |
 |---|---|---|
 | `GET` | `/v1/auth/login` | Redirects to Google login |
-| `GET` | `/v1/auth/callback` | Handles OAuth2 callback, returns `id_token` |
+| `GET` | `/v1/auth/callback` | Handles OAuth2 callback, redirects to UI with token |
 
 ### Headers
 
@@ -398,24 +465,32 @@ Headers:
 
 ## Authentication
 
-NovaDesk uses Google OAuth2. Your Spring Boot app acts as a **resource server** — it never handles login directly. Google issues the token; the app only validates it.
+NovaDesk uses Google OAuth2. The Spring Boot app acts as a **resource server** — it never handles login directly. Google issues the token; the app only validates it.
 
-### Getting a Token (Dev)
+### Flow
+
+```
+1. User clicks "Continue with Google" on the UI landing page
+2. Redirects to GET /v1/auth/login → Google login page
+3. Google redirects to GET /v1/auth/callback with auth code
+4. Backend exchanges code for id_token
+5. Backend redirects to http://localhost:5173/?token=<id_token>
+6. UI stores token in localStorage
+7. All subsequent API calls use Authorization: Bearer <id_token>
+```
+
+### Getting a Token (Postman/Dev)
 
 ```
 1. Open browser → http://localhost:9191/v1/auth/login
 2. Sign in with your Google account
-3. You receive a JSON response:
-   {
-     "id_token": "eyJhbGci......",
-     "usage": "Use this as: Authorization: Bearer <id_token>"
-   }
-4. Use id_token as Bearer token in Postman — set under Authorization tab as Bearer Token
+3. Token appears in URL: http://localhost:5173/?token=eyJhbGci...
+4. Copy token → use as Bearer token in Postman
 ```
 
 ### Domain Restriction
 
-Only emails from `ALLOWED_DOMAIN` are accepted. All others receive `401 Unauthorized`. Set this in your `.env` file to restrict access to your company email domain.
+Only emails from `ALLOWED_DOMAIN` are accepted. All others receive `401 Unauthorized`.
 
 ---
 
@@ -434,22 +509,20 @@ NovaDesk sends HTML emails asynchronously via Kafka when:
 ```
 Ticket action in BotTools
         ↓
-TicketEventProducer → Kafka topic
-        ↓ (async — user gets API response immediately)
-TicketEventConsumer
+TicketEventProducer → Kafka topic (async)
+        ↓
+TicketEventConsumer (manual ack)
         ↓
 EmailService (Thymeleaf HTML rendering)
         ↓
-Employee inbox (Gmail SMTP)
+Gmail SMTP → Employee inbox
 ```
 
-Emails are sent to the address from the employee's Google JWT (`email` claim) automatically — no manual email input needed.
+Email address is taken from the employee's Google JWT `email` claim automatically — no manual input needed.
 
 ---
 
 ## Memory & Conversation Management
-
-### How memory works
 
 Every message is persisted to `chat_messages` with `conversationId`, `role`, and `content`. On each request the bot receives:
 
@@ -460,11 +533,11 @@ This keeps token usage flat regardless of conversation length.
 
 ### Summarization
 
-After every 10 messages, a dedicated summarization `ChatClient` (no memory advisor) compresses older history into a rolling summary stored in `conversation_summaries`. This summary is injected as a `SystemMessage` on subsequent requests.
+After every 10 messages, a dedicated summarization `ChatClient` (no memory advisor) compresses older history into a rolling summary stored in `conversation_summaries`. Injected as a `SystemMessage` on subsequent requests.
 
 ### Cleanup
 
-A scheduled job runs daily at midnight deleting messages older than 30 days. Enable it by adding `@EnableScheduling` to your main application class.
+A scheduled job runs daily at midnight deleting messages older than 30 days. Enable by adding `@EnableScheduling` to your main application class.
 
 ---
 
@@ -475,7 +548,7 @@ A scheduled job runs daily at midnight deleting messages older than 30 days. Ena
 | Field | Description | Default |
 |---|---|---|
 | `id` | Auto-generated | Never set manually |
-| `username` | From authenticated JWT | Required |
+| `username` | From authenticated JWT — never from user input | Required |
 | `title` | Short summary | Auto-generated by bot |
 | `description` | Full issue details | Required |
 | `status` | Lifecycle state | `OPEN` |
@@ -499,7 +572,16 @@ OPEN → IN_PROGRESS → RESOLVED → CLOSED
 
 ### Duplicate Prevention
 
-Before creating a ticket, the bot checks for an existing ticket with the same `username` and `title` created in the last 30 seconds. If found, it returns the existing ticket instead of creating a duplicate.
+Before creating a ticket, the bot checks for an existing ticket with the same `username` and `title` created in the last 30 seconds. If found, returns the existing ticket instead of creating a duplicate.
+
+### DTOs
+
+All tool interactions use clean DTOs — never raw entity objects:
+
+- `TicketRequest` — for creation (username, title, description, status, priority, assignee)
+- `TicketUpdateRequest` — for updates (title, description, status, priority, assignee)
+
+Date fields (`createdAt`, `updatedAt`) are always set by `@PrePersist`/`@PreUpdate` hooks — never by the model.
 
 ---
 
@@ -509,5 +591,6 @@ Before creating a ticket, the bot checks for an existing ticket with the same `u
 - Groq free tier: 1,000 requests/day, 12,000 tokens/minute
 - Gmail free tier: 500 emails/day — switch to SendGrid or AWS SES for production
 - Summarization adds slight latency on every 10th message in a conversation
-- `ConversationId` is client-provided — use a UUID generator on the frontend to ensure uniqueness
+- `ConversationId` is client-provided — the React UI generates a UUID automatically per session
 - Kafka runs with replication factor 1 in local setup — increase to 3 for production
+- llama-3.3-70b may occasionally not follow tool-calling instructions — temperature is set to 0.3 to reduce this

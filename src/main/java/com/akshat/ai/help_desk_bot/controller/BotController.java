@@ -19,6 +19,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -59,37 +60,38 @@ public class BotController {
             log.debug("No ConversationId provided; generated={}", conversationId);
         }
 
-        // Username always comes from verified JWT — never from user input
         String username = jwtUserContext.getUsername(jwt);
         String fullName = jwtUserContext.getFullName(jwt);
         String email = jwtUserContext.getEmail(jwt);
 
-        log.debug("Chat request: conversationId='{}' username='{}' prompt='{}'",
-                conversationId, username, query);
+        log.info("Chat request: conversationId='{}' username='{}' prompt='{}'", conversationId, username, query);
+
         botTools.registerEmail(username, email);
-        // Register/update conversation with verified username
         conversationService.upsertConversation(conversationId, username);
 
         final String cid = conversationId;
 
+        try {
+            // Inject identity into system prompt only — never into user message
+            String baseSystem = new String(resource.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            String fullSystem = "Employee username: " + username + ". Full name: " + fullName + ".\n\n" + baseSystem;
 
-        // Inject username into system context so bot knows who it's talking to
-        String systemContext = "The authenticated employee username is: " + username +
-                ". Their full name is: " + fullName + ". " +
-                "Use this as the username for all ticket operations.";
+            String result = chatClient
+                    .prompt()
+                    .advisors(spec -> spec.param(ChatMemory.CONVERSATION_ID, cid))
+                    .tools(botTools)
+                    .system(fullSystem)  // system prompt has identity
+                    .user(query)         // user message only
+                    .call()
+                    .content();
 
+            log.info("Chat response: conversationId='{}' result='{}'", cid, result);
+            return new ChatResponse(cid, result);
 
-        String result = chatClient
-                .prompt()
-                .advisors(spec -> spec.param(ChatMemory.CONVERSATION_ID, cid))
-                .tools(botTools)
-                .system(resource)
-                .user(systemContext + "\n\nUser message: " + query)
-                .call()
-                .content();
-
-        log.debug("Chat response: conversationId='{}' result='{}'", cid, result);
-        return new ChatResponse(cid, result);
+        } catch (Exception e) {
+            log.error("Chat request failed for conversationId='{}'", cid, e);
+            return new ChatResponse(cid, "Something went wrong. Please try again.");
+        }
     }
 
     // Debug endpoint to inspect conversation messages persisted in DB
