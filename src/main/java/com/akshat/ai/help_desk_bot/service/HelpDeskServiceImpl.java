@@ -1,5 +1,8 @@
 package com.akshat.ai.help_desk_bot.service;
 
+import com.akshat.ai.help_desk_bot.dto.TicketRequest;
+import com.akshat.ai.help_desk_bot.enums.Priority;
+import com.akshat.ai.help_desk_bot.enums.Status;
 import com.akshat.ai.help_desk_bot.service.HelpDeskService;
 import com.akshat.ai.help_desk_bot.entity.Ticket;
 import com.akshat.ai.help_desk_bot.repository.TicketRepository;
@@ -27,16 +30,25 @@ public class HelpDeskServiceImpl implements HelpDeskService {
     }
 
     @Override
-    public Ticket createTicket(Ticket ticket) {
-        // Defensive: ignore any provided id
-        if (ticket == null) throw new IllegalArgumentException("Ticket cannot be null");
-        ticket.setId(null);
-
-        // Ensure business rules: title must be present
-        if (ticket.getTitle() == null || ticket.getTitle().trim().isEmpty()) {
+    public Ticket createTicket(TicketRequest request) {
+        if (request == null) throw new IllegalArgumentException("Ticket request cannot be null");
+        if (request.title() == null || request.title().trim().isEmpty()) {
             throw new IllegalArgumentException("Ticket title must not be empty");
         }
-        // Save the ticket; Ticket entity PrePersist will set createdAt/updatedAt
+
+        Ticket ticket = Ticket.builder()
+                .username(request.username())
+                .title(request.title().trim())
+                .description(request.description())
+                .status(request.status() != null
+                        ? Status.valueOf(request.status().toUpperCase())
+                        : Status.OPEN)
+                .priority(request.priority() != null
+                        ? Priority.valueOf(request.priority().toUpperCase())
+                        : Priority.MEDIUM)
+                .assignee(request.assignee() != null ? request.assignee() : "Unassigned")
+                .build();
+
         Ticket saved = ticketRepository.save(ticket);
         log.info("Created ticket id={} username={}", saved.getId(), saved.getUsername());
         return saved;

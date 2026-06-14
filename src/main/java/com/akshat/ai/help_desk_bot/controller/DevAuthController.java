@@ -2,6 +2,9 @@ package com.akshat.ai.help_desk_bot.controller;
 
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -17,9 +20,14 @@ import java.util.Map;
 @RequestMapping("/v1/auth")
 public class DevAuthController {
 
+    @Value("${spring.security.oauth2.client.registration.google.client-id}")
+    private String clientId;
+
+    @Value("${spring.security.oauth2.client.registration.google.client-secret}")
+    private String clientSecret;
+
     @GetMapping("/login")
     public void login(HttpServletResponse response) throws IOException {
-        // Redirect to Google login
         String googleAuthUrl = "https://accounts.google.com/o/oauth2/v2/auth" +
                 "?client_id=" + clientId +
                 "&redirect_uri=http://localhost:9191/v1/auth/callback" +
@@ -28,15 +36,9 @@ public class DevAuthController {
         response.sendRedirect(googleAuthUrl);
     }
 
-    @Value("${spring.security.oauth2.client.registration.google.client-id}")
-    private String clientId;
-
-    @Value("${spring.security.oauth2.client.registration.google.client-secret}")
-    private String clientSecret;
-
     @GetMapping("/callback")
-    public Map<String, String> callback(@RequestParam("code") String code) {
-        // Exchange code for token
+    public void callback(@RequestParam("code") String code,
+                         HttpServletResponse response) throws IOException { // ← void + HttpServletResponse added
         RestTemplate restTemplate = new RestTemplate();
 
         MultiValueMap<String, String> params = new LinkedMultiValueMap<>();
@@ -46,16 +48,17 @@ public class DevAuthController {
         params.add("redirect_uri", "http://localhost:9191/v1/auth/callback");
         params.add("grant_type", "authorization_code");
 
-        Map response = restTemplate.postForObject(
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
+
+        Map tokenResponse = restTemplate.postForObject(
                 "https://oauth2.googleapis.com/token",
-                params,
+                new HttpEntity<>(params, headers),
                 Map.class
         );
 
-        // Returns id_token — use this as Bearer token in Postman
-        return Map.of(
-                "id_token", (String) response.get("id_token"),
-                "usage", "Use this as: Authorization: Bearer <id_token>"
-        );
+        // ← replaced Map.of(...) with redirect to UI
+        String idToken = (String) tokenResponse.get("id_token");
+        response.sendRedirect("http://localhost:5173/?token=" + idToken);
     }
 }
