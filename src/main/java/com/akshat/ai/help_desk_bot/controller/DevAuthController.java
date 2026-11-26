@@ -2,6 +2,7 @@ package com.akshat.ai.help_desk_bot.controller;
 
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -18,6 +19,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/v1/auth")
+@Profile("dev")
 public class DevAuthController {
 
     @Value("${spring.security.oauth2.client.registration.google.client-id}")

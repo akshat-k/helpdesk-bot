@@ -301,13 +301,13 @@ GROQ_API_KEY=your_groq_api_key
 # Google OAuth2
 GOOGLE_CLIENT_ID=your_google_client_id
 GOOGLE_CLIENT_SECRET=your_google_client_secret
+ALLOWED_DOMAIN=your-company.com
 
 # Mail
 MAIL_USERNAME=your-email@gmail.com
 MAIL_PASSWORD=yourapppasword
 
 # App
-ALLOWED_DOMAIN=gmail.com
 AUTH_REDIRECT_URI=http://localhost:9191/v1/auth/callback
 SUPPORT_TEAM_EMAIL=your-email@gmail.com
 ```
@@ -336,11 +336,12 @@ spring.ai.openai.chat.options.model=llama-3.3-70b-versatile
 spring.ai.openai.chat.options.max-tokens=1000
 spring.ai.openai.chat.options.temperature=0.3
 
-# Google OAuth2
+# Google OAuth2 — GOOGLE_CLIENT_ID is also the required JWT audience
 spring.security.oauth2.client.registration.google.client-id=${GOOGLE_CLIENT_ID}
 spring.security.oauth2.client.registration.google.client-secret=${GOOGLE_CLIENT_SECRET}
 spring.security.oauth2.client.registration.google.scope=openid,email,profile
 spring.security.oauth2.resourceserver.jwt.jwk-set-uri=https://www.googleapis.com/oauth2/v3/certs
+app.security.allowed-domain=${ALLOWED_DOMAIN}
 
 # Kafka
 spring.kafka.bootstrap-servers=localhost:9093
@@ -366,7 +367,6 @@ spring.mail.properties.mail.smtp.starttls.enable=true
 spring.mail.properties.mail.smtp.starttls.required=true
 
 # App
-app.security.allowed-domain=${ALLOWED_DOMAIN}
 app.auth.redirect-uri=${AUTH_REDIRECT_URI}
 app.mail.from=${MAIL_USERNAME}
 app.mail.support-team=${SUPPORT_TEAM_EMAIL}
@@ -458,7 +458,19 @@ Headers:
 
 ## Authentication
 
-NovaDesk uses Google OAuth2. The Spring Boot app acts as a **resource server** — it never handles login directly. Google issues the token; the app only validates it.
+NovaDesk uses Google-issued ID tokens. The Spring Boot app acts as a **resource server** and validates the token on each protected API request.
+
+All `/v1/ai/**` endpoints require `Authorization: Bearer <Google ID token>`.
+The backend verifies the token signature against Google's JWKS, issuer, expiration,
+audience (`GOOGLE_CLIENT_ID`), verified email, and configured `ALLOWED_DOMAIN`.
+The local `/v1/auth/login` and callback helper is available only with the `dev`
+Spring profile; production deployments must use their own trusted Google sign-in
+flow and send the resulting Google ID token as a bearer token.
+
+Ticket and conversation ownership is keyed by Google's stable `sub` claim, not
+the email or username. Existing rows have no verified subject mapping and are
+intentionally inaccessible until an operator backfills `owner_subject` using a
+trusted identity mapping; do not infer ownership from user-provided values.
 
 ### Flow
 

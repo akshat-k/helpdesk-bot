@@ -14,7 +14,8 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 @Builder
 @Table(name = "conversations", indexes = {
-        @Index(columnList = "username")
+        @Index(columnList = "username"),
+        @Index(columnList = "owner_subject")
 })
 public class Conversation {
 
@@ -23,6 +24,9 @@ public class Conversation {
 
     @Column(name = "username")
     private String username;
+
+    @Column(name = "owner_subject")
+    private String ownerSubject;
 
     @Column(name = "started_at", nullable = false)
     private LocalDateTime startedAt;

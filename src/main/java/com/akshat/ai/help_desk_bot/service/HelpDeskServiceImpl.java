@@ -30,14 +30,19 @@ public class HelpDeskServiceImpl implements HelpDeskService {
     }
 
     @Override
-    public Ticket createTicket(TicketRequest request) {
+    public Ticket createTicket(TicketRequest request, String ownerSubject, String ownerUsername) {
         if (request == null) throw new IllegalArgumentException("Ticket request cannot be null");
+        if (ownerSubject == null || ownerSubject.isBlank()
+                || ownerUsername == null || ownerUsername.isBlank()) {
+            throw new IllegalArgumentException("Authenticated ticket owner is required");
+        }
         if (request.title() == null || request.title().trim().isEmpty()) {
             throw new IllegalArgumentException("Ticket title must not be empty");
         }
 
         Ticket ticket = Ticket.builder()
-                .username(request.username())
+                .ownerSubject(ownerSubject)
+                .username(ownerUsername)
                 .title(request.title().trim())
                 .description(request.description())
                 .status(request.status() != null
@@ -56,11 +61,11 @@ public class HelpDeskServiceImpl implements HelpDeskService {
 
     @Override
     @Transactional
-    public Optional<Ticket> updateTicket(Long id, Ticket ticketUpdates) {
-        if (id == null || id <= 0) {
+    public Optional<Ticket> updateTicket(Long id, String ownerSubject, Ticket ticketUpdates) {
+        if (id == null || id <= 0 || ownerSubject == null || ownerSubject.isBlank()) {
             return Optional.empty();
         }
-        Optional<Ticket> existing = ticketRepository.findById(id);
+        Optional<Ticket> existing = ticketRepository.findByIdAndOwnerSubject(id, ownerSubject);
         if (existing.isEmpty()) {
             return Optional.empty();
         }
@@ -73,15 +78,6 @@ public class HelpDeskServiceImpl implements HelpDeskService {
 
         // Prevent accidental id changes
         ticketUpdates.setId(t.getId());
-
-        // Pre-validate username change
-        String newUsername = ticketUpdates.getUsername();
-        if (newUsername != null) {
-            newUsername = newUsername.trim();
-            if (!newUsername.isEmpty() && !newUsername.equals(t.getUsername())) {
-                log.warn("Changing username to {} for ticket id={}", newUsername, t.getId());
-            }
-        }
 
         AtomicBoolean changed = new AtomicBoolean(false);
 
@@ -123,13 +119,6 @@ public class HelpDeskServiceImpl implements HelpDeskService {
             }
         });
 
-        Optional.ofNullable(newUsername).ifPresent(v -> {
-            if (!v.equals(t.getUsername())) {
-                t.setUsername(v);
-                changed.set(true);
-            }
-        });
-
         if (!changed.get()) {
             log.debug("No changes detected for ticket id={}", t.getId());
             return Optional.of(t);
@@ -142,19 +131,22 @@ public class HelpDeskServiceImpl implements HelpDeskService {
     }
 
     @Override
-    public Optional<Ticket> getTicketById(Long id) {
-        return ticketRepository.findById(id);
+    public Optional<Ticket> getTicketById(Long id, String ownerSubject) {
+        if (id == null || id <= 0 || ownerSubject == null || ownerSubject.isBlank()) {
+            return Optional.empty();
+        }
+        return ticketRepository.findByIdAndOwnerSubject(id, ownerSubject);
     }
 
     @Override
-    public List<Ticket> getTicketByUsername(String username) {
-        if (username == null) return List.of();
-        return ticketRepository.findByUsername(username.trim());
+    public List<Ticket> getTicketsForOwner(String ownerSubject) {
+        if (ownerSubject == null || ownerSubject.isBlank()) return List.of();
+        return ticketRepository.findByOwnerSubject(ownerSubject);
     }
 
     @Override
-    public List<Ticket> findRecentByUsernameAndTitle(String username, String title, LocalDateTime after) {
-
-        return ticketRepository.findRecentByUsernameAndTitle(username,title,after);
+    public List<Ticket> findRecentByOwnerAndTitle(String ownerSubject, String title, LocalDateTime after) {
+        if (ownerSubject == null || ownerSubject.isBlank()) return List.of();
+        return ticketRepository.findRecentByOwnerSubjectAndTitle(ownerSubject, title, after);
     }
 }

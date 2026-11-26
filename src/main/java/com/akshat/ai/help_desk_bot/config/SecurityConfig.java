@@ -3,7 +3,6 @@ package com.akshat.ai.help_desk_bot.config;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -17,13 +16,17 @@ import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import java.util.List;
+import java.util.Locale;
 
 @Configuration
 @EnableWebSecurity
 public class SecurityConfig {
 
-    @Value("${app.security.allowed-domain}")
+    @Value("${app.security.allowed-domain:}")
     private String allowedDomain;
+
+    @Value("${spring.security.oauth2.client.registration.google.client-id:}")
+    private String googleClientId;
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
@@ -35,9 +38,7 @@ public class SecurityConfig {
                 )
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/actuator/health").permitAll()
-                        .requestMatchers("/v1/auth/**").permitAll()
-                        .requestMatchers("/v1/ai/**").permitAll()
-                        .requestMatchers("http://localhost:5173/**").permitAll()
+                        .requestMatchers("/v1/auth/login", "/v1/auth/callback").permitAll()
                         .requestMatchers(
                                 "/swagger-ui.html",
                                 "/swagger-ui/**",
@@ -59,29 +60,57 @@ public class SecurityConfig {
         NimbusJwtDecoder decoder = NimbusJwtDecoder
                 .withJwkSetUri("https://www.googleapis.com/oauth2/v3/certs")
                 .build();
+        decoder.setJwtValidator(googleJwtValidator());
+        return decoder;
+    }
 
-        // Validate email domain — only allow company employees
-        OAuth2TokenValidator<Jwt> domainValidator = jwt -> {
+    @Bean
+    public OAuth2TokenValidator<Jwt> googleJwtValidator() {
+        OAuth2TokenValidator<Jwt> issuerValidator = jwt -> {
+            String issuer = jwt.getIssuer() == null ? null : jwt.getIssuer().toString();
+            if ("https://accounts.google.com".equals(issuer) || "accounts.google.com".equals(issuer)) {
+                return OAuth2TokenValidatorResult.success();
+            }
+            return validationFailure("invalid_issuer", "Token issuer is not Google");
+        };
+
+        OAuth2TokenValidator<Jwt> audienceValidator = jwt -> {
+            if (googleClientId != null && !googleClientId.isBlank()
+                    && jwt.getAudience().contains(googleClientId)) {
+                return OAuth2TokenValidatorResult.success();
+            }
+            return validationFailure("invalid_audience", "Token audience is not configured for this application");
+        };
+
+        OAuth2TokenValidator<Jwt> identityValidator = jwt -> {
             String email = jwt.getClaimAsString("email");
             Boolean emailVerified = jwt.getClaimAsBoolean("email_verified");
+            String normalizedDomain = allowedDomain == null
+                    ? ""
+                    : allowedDomain.trim().toLowerCase(Locale.ROOT);
 
-            if (email == null || !email.endsWith("@" + allowedDomain)) {
-                return OAuth2TokenValidatorResult.failure(
-                        new OAuth2Error("invalid_domain",
-                                "Only @" + allowedDomain + " accounts are allowed", null)
-                );
+            if (normalizedDomain.isEmpty() || email == null
+                    || !email.toLowerCase(Locale.ROOT).endsWith("@" + normalizedDomain)) {
+                return validationFailure("invalid_domain", "Account is not in the allowed email domain");
             }
             if (emailVerified == null || !emailVerified) {
-                return OAuth2TokenValidatorResult.failure(
-                        new OAuth2Error("email_not_verified",
-                                "Email must be verified", null)
-                );
+                return validationFailure("email_not_verified", "Email must be verified");
+            }
+            if (jwt.getSubject() == null || jwt.getSubject().isBlank()) {
+                return validationFailure("invalid_subject", "Token subject is required");
             }
             return OAuth2TokenValidatorResult.success();
         };
 
-        decoder.setJwtValidator(JwtValidators.createDefaultWithValidators(domainValidator));
-        return decoder;
+        return JwtValidators.createDefaultWithValidators(
+                issuerValidator,
+                audienceValidator,
+                identityValidator
+        );
+    }
+
+    private OAuth2TokenValidatorResult validationFailure(String code, String description) {
+        return OAuth2TokenValidatorResult.failure(new OAuth2Error(code, description, null));
     }
 
     @Bean

@@ -10,16 +10,16 @@ import java.util.Optional;
 public interface HelpDeskService {
 
     // Create a new ticket
-    Ticket createTicket(TicketRequest ticket);
+    Ticket createTicket(TicketRequest ticket, String ownerSubject, String ownerUsername);
 
-    // Update an existing ticket identified by DB id
-    Optional<Ticket> updateTicket(Long id, Ticket ticketUpdates);
+    // Update an existing ticket only when it belongs to the authenticated owner
+    Optional<Ticket> updateTicket(Long id, String ownerSubject, Ticket ticketUpdates);
 
-    // Get a ticket by database id
-    Optional<Ticket> getTicketById(Long id);
+    // Get a ticket by database id only when it belongs to the authenticated owner
+    Optional<Ticket> getTicketById(Long id, String ownerSubject);
 
-    // Get tickets by username (requester/owner)
-    List<Ticket> getTicketByUsername(String username);
+    // Get tickets for the authenticated owner
+    List<Ticket> getTicketsForOwner(String ownerSubject);
 
-    List<Ticket> findRecentByUsernameAndTitle(String username, String title, LocalDateTime after);
+    List<Ticket> findRecentByOwnerAndTitle(String ownerSubject, String title, LocalDateTime after);
 }
