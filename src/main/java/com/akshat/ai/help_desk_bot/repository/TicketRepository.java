@@ -4,6 +4,8 @@ import com.akshat.ai.help_desk_bot.entity.Ticket;
 import com.akshat.ai.help_desk_bot.enums.Priority;
 import com.akshat.ai.help_desk_bot.enums.Status;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -16,7 +18,7 @@ import java.util.Optional;
 public interface TicketRepository extends JpaRepository<Ticket, Long> {
     List<Ticket> findByStatus(Status status);
     List<Ticket> findByPriority(Priority priority);
-    List<Ticket> findByOwnerSubject(String ownerSubject);
+    Page<Ticket> findAllByOwnerSubject(String ownerSubject, Pageable pageable);
     Optional<Ticket> findByIdAndOwnerSubject(Long id, String ownerSubject);
 
     @Query("SELECT t FROM Ticket t WHERE t.ownerSubject = :ownerSubject " +

@@ -20,6 +20,8 @@ public class TicketEvent implements Serializable {
         CREATED, UPDATED, RESOLVED, CLOSED
     }
 
+    private String eventId;
+    private int schemaVersion;
     private EventType eventType;
     private Long ticketId;
     private String username;
