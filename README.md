@@ -232,8 +232,7 @@ novadesk-ui/
 ### Backend
 - Java 21+
 - Maven 3.8+
-- MySQL 8+
-- Docker (for Kafka)
+- Docker Engine with Docker Compose
 - A Google Cloud project with OAuth2 credentials
 - A Groq API key — free at [console.groq.com](https://console.groq.com)
 - A Gmail account with an App Password generated
@@ -246,13 +245,27 @@ novadesk-ui/
 
 ## Setup & Configuration
 
-### 1. Database
+### 1. Start local infrastructure (MySQL + Kafka)
 
-```sql
-CREATE DATABASE helpdesk_bot;
+Docker Compose runs both services with persistent named volumes. The included
+credentials are for local development only; override them with a local `.env`
+file before starting the services if needed.
+
+```bash
+docker compose up -d
+docker compose ps
 ```
 
-Tables are auto-created by Hibernate on first run (`spring.jpa.hibernate.ddl-auto=update`).
+The backend connects to MySQL at `localhost:3307` using the `helpdesk` application
+user and to Kafka at `localhost:9093`. To stop the services without deleting
+their data, run `docker compose down`. To intentionally remove local database
+and Kafka data as well, run `docker compose down -v`.
+
+The database and Kafka addresses and credentials can be overridden with
+`DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, and `KAFKA_BOOTSTRAP_SERVERS` when
+running the backend. Compose also accepts `MYSQL_PORT`, `MYSQL_DATABASE`,
+`MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_ROOT_PASSWORD`, and `KAFKA_PORT`; these
+must match the backend settings when overridden.
 
 ### 2. Google OAuth2
 
@@ -269,40 +282,18 @@ Tables are auto-created by Hibernate on first run (`spring.jpa.hibernate.ddl-aut
 3. Type a name (e.g. `helpdesk-bot`) → Click **Create**
 4. Copy the 16-character password — remove spaces when pasting
 
-### 4. Kafka (Docker)
-
-```bash
-docker compose up -d
-```
-
-`docker-compose.yml` (KRaft mode — Kafka 4.x, no Zookeeper):
-
-```yaml
-services:
-  kafka:
-    image: apache/kafka:4.1.0
-    container_name: kafka
-    ports:
-      - "9092:9092"
-    environment:
-      KAFKA_NODE_ID: 1
-      KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
-      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
-```
-
 ### 5. Backend Environment Variables
 
-Create `.env` in the backend project root — **never commit this file**:
+Set these variables in the backend process or IDE run configuration. Docker
+Compose's `.env` file is used for Compose interpolation; Spring Boot does not
+automatically load it.
 
 ```bash
 # Database
-DB_URL=jdbc:mysql://localhost:3306/helpdesk_bot
-DB_USERNAME=root
-DB_PASSWORD=yourpassword
+DB_URL=jdbc:mysql://localhost:3307/helpdesk_bot
+DB_USERNAME=helpdesk
+DB_PASSWORD=helpdesk_local
+KAFKA_BOOTSTRAP_SERVERS=localhost:9093
 
 # LLM
 GROQ_API_KEY=your_groq_api_key
@@ -323,7 +314,9 @@ SUPPORT_TEAM_EMAIL=your-email@gmail.com
 
 ### 6. `application.properties`
 
-No secrets — all values come from environment variables:
+Database and Kafka settings support environment overrides. Local defaults match
+the Docker Compose services; credentials for external services should be
+provided through the deployment platform's secret manager:
 
 ```properties
 # Server
@@ -350,7 +343,7 @@ spring.security.oauth2.client.registration.google.scope=openid,email,profile
 spring.security.oauth2.resourceserver.jwt.jwk-set-uri=https://www.googleapis.com/oauth2/v3/certs
 
 # Kafka
-spring.kafka.bootstrap-servers=localhost:9092
+spring.kafka.bootstrap-servers=localhost:9093
 spring.kafka.producer.key-serializer=org.apache.kafka.common.serialization.StringSerializer
 spring.kafka.producer.value-serializer=org.springframework.kafka.support.serializer.JsonSerializer
 spring.kafka.producer.properties.spring.json.add.type.headers=true
