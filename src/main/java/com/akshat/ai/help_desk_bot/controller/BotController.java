@@ -2,7 +2,6 @@ package com.akshat.ai.help_desk_bot.controller;
 
 
 import com.akshat.ai.help_desk_bot.entity.ChatMessage;
-import com.akshat.ai.help_desk_bot.entity.Conversation;
 import com.akshat.ai.help_desk_bot.repository.ChatMessageRepository;
 import com.akshat.ai.help_desk_bot.security.JwtUserContext;
 import com.akshat.ai.help_desk_bot.service.ConversationService;
@@ -61,13 +60,12 @@ public class BotController {
         }
 
         String username = jwtUserContext.getUsername(jwt);
+        String ownerSubject = jwtUserContext.getGoogleSubject(jwt);
         String fullName = jwtUserContext.getFullName(jwt);
-        String email = jwtUserContext.getEmail(jwt);
 
-        log.info("Chat request: conversationId='{}' username='{}' prompt='{}'", conversationId, username, query);
+        log.debug("Chat request: conversationId='{}'", conversationId);
 
-        botTools.registerEmail(username, email);
-        conversationService.upsertConversation(conversationId, username);
+        conversationService.upsertConversation(conversationId, ownerSubject, username);
 
         final String cid = conversationId;
 
@@ -85,7 +83,7 @@ public class BotController {
                     .call()
                     .content();
 
-            log.info("Chat response: conversationId='{}' result='{}'", cid, result);
+            log.debug("Chat response generated for conversationId='{}'", cid);
             return new ChatResponse(cid, result);
 
         } catch (Exception e) {
@@ -97,6 +95,7 @@ public class BotController {
     // Debug endpoint to inspect conversation messages persisted in DB
     @GetMapping("/memory")
     public List<String> getMemory(@RequestHeader("ConversationId") String conversationId) {
+        conversationService.requireOwnedConversation(conversationId, jwtUserContext.getCurrentSubject());
         List<ChatMessage> list = chatMessageRepository.findByConversationIdOrderByCreatedAtAsc(conversationId);
         return list.stream().map(ChatMessage::getContent).collect(Collectors.toList());
     }
@@ -109,8 +108,11 @@ public class BotController {
             conversationId = UUID.randomUUID().toString();
             log.debug("No ConversationId header supplied for push; generated conversationId={}", conversationId);
         }
+        String username = jwtUserContext.getCurrentUsername();
+        conversationService.upsertConversation(conversationId, jwtUserContext.getCurrentSubject(), username);
         ChatMessage cm = new ChatMessage();
         cm.setConversationId(conversationId);
+        cm.setUsername(username);
         cm.setContent(content == null ? "" : content);
         ChatMessage saved = chatMessageRepository.save(cm);
         log.debug("Pushed chat message id={} conversationId={}", saved.getId(), conversationId);
@@ -120,6 +122,7 @@ public class BotController {
     // Debug endpoint to clear conversation memory (DB)
     @DeleteMapping("/memory")
     public void clearMemory(@RequestHeader("ConversationId") String conversationId) {
+        conversationService.requireOwnedConversation(conversationId, jwtUserContext.getCurrentSubject());
         chatMessageRepository.deleteByConversationId(conversationId);
         log.debug("Cleared messages for conversationId={}", conversationId);
     }
@@ -127,14 +130,14 @@ public class BotController {
     // Get all conversations for a user
     @GetMapping("/conversations")
     public Object getConversations(@AuthenticationPrincipal Jwt jwt) {
-        String username = jwtUserContext.getUsername(jwt);
-        return conversationService.getConversationsByUsername(username);
+        return conversationService.getConversationsByOwner(jwtUserContext.getGoogleSubject(jwt));
     }
 
 
     // Get all messages for a specific conversation
     @GetMapping("/conversations/{conversationId}/messages")
     public List<String> getConversationMessages(@PathVariable String conversationId) {
+        conversationService.requireOwnedConversation(conversationId, jwtUserContext.getCurrentSubject());
         return chatMessageRepository
                 .findByConversationIdOrderByCreatedAtAsc(conversationId)
                 .stream()

@@ -10,18 +10,20 @@ import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface TicketRepository extends JpaRepository<Ticket, Long> {
     List<Ticket> findByStatus(Status status);
     List<Ticket> findByPriority(Priority priority);
-    List<Ticket> findByUsername(String username);
+    List<Ticket> findByOwnerSubject(String ownerSubject);
+    Optional<Ticket> findByIdAndOwnerSubject(Long id, String ownerSubject);
 
-    @Query("SELECT t FROM Ticket t WHERE t.username = :username " +
+    @Query("SELECT t FROM Ticket t WHERE t.ownerSubject = :ownerSubject " +
             "AND t.title = :title " +
             "AND t.createdAt >= :after")
-    List<Ticket> findRecentByUsernameAndTitle(
-            @Param("username") String username,
+    List<Ticket> findRecentByOwnerSubjectAndTitle(
+            @Param("ownerSubject") String ownerSubject,
             @Param("title") String title,
             @Param("after") LocalDateTime after
     );

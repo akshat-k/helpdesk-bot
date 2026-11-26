@@ -24,7 +24,9 @@ import com.akshat.ai.help_desk_bot.enums.Priority;
 import javax.validation.constraints.NotNull;
 
 @Entity
-@Table(name = "tickets")
+@Table(name = "tickets", indexes = {
+        @jakarta.persistence.Index(columnList = "owner_subject")
+})
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
@@ -37,6 +39,9 @@ public class Ticket {
 
     // Allow multiple tickets per username (remove unique constraint)
     private String username;
+
+    @Column(name = "owner_subject")
+    private String ownerSubject;
 
     @NotNull
     @Column(nullable = false)

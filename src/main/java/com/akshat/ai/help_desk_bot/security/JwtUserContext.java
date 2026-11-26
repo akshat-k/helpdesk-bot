@@ -1,6 +1,7 @@
 package com.akshat.ai.help_desk_bot.security;
 
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Component;
 
@@ -8,11 +9,11 @@ import org.springframework.stereotype.Component;
 public class JwtUserContext {
 
     public String getUsername(Jwt jwt) {
-        // Google uses email as the unique identifier
         String email = jwt.getClaimAsString("email");
-        if (email == null) throw new IllegalStateException("Email claim missing from JWT");
-        // Use part before @ as username, or full email — your choice
-        return email.split("@")[0]; // e.g. akshat.sharma@company.com → akshat.sharma
+        if (email == null || email.isBlank() || !email.contains("@")) {
+            throw new IllegalStateException("Valid email claim missing from JWT");
+        }
+        return email.substring(0, email.indexOf('@'));
     }
 
     public String getEmail(Jwt jwt) {
@@ -24,6 +25,26 @@ public class JwtUserContext {
     }
 
     public String getGoogleSubject(Jwt jwt) {
-        return jwt.getClaimAsString("sub"); // Google's unique user ID
+        return jwt.getSubject();
+    }
+
+    public String getCurrentUsername() {
+        return getUsername(getCurrentJwt());
+    }
+
+    public String getCurrentEmail() {
+        return getEmail(getCurrentJwt());
+    }
+
+    public String getCurrentSubject() {
+        return getGoogleSubject(getCurrentJwt());
+    }
+
+    private Jwt getCurrentJwt() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !(authentication.getPrincipal() instanceof Jwt jwt)) {
+            throw new IllegalStateException("Authenticated Google JWT is required");
+        }
+        return jwt;
     }
 }

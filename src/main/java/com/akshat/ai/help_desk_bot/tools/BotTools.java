@@ -7,6 +7,7 @@ import com.akshat.ai.help_desk_bot.enums.Priority;
 import com.akshat.ai.help_desk_bot.enums.Status;
 import com.akshat.ai.help_desk_bot.event.TicketEvent;
 import com.akshat.ai.help_desk_bot.event.producer.TicketEventProducer;
+import com.akshat.ai.help_desk_bot.security.JwtUserContext;
 import com.akshat.ai.help_desk_bot.service.HelpDeskService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -16,10 +17,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
 
 @Component
 @Slf4j
@@ -31,39 +29,37 @@ public class BotTools {
     @Autowired
     private TicketEventProducer eventProducer;
 
-    // Store email per conversationId — set from controller
-    private final Map<String, String> conversationEmailMap = new ConcurrentHashMap<>();
-
-    public void registerEmail(String conversationId, String email) {
-        conversationEmailMap.put(conversationId, email);
-    }
+    @Autowired
+    private JwtUserContext jwtUserContext;
 
     @Tool(name = "create_ticket_tool", description = "This tool helps in creating a new ticket in database")
     public String createTicketTool(@ToolParam(description = "Ticket Details") TicketRequest ticket) {
         try {
+            if (ticket == null) return "Ticket details are required.";
+            String ownerSubject = jwtUserContext.getCurrentSubject();
+            String ownerUsername = jwtUserContext.getCurrentUsername();
 
-            // Check for duplicate — same username + title created in last 30 seconds
-            List<Ticket> recent = helpDeskService.findRecentByUsernameAndTitle(
-                    ticket.username(),
+            // Check for duplicate — same owner and title created in last 30 seconds
+            List<Ticket> recent = helpDeskService.findRecentByOwnerAndTitle(
+                    ownerSubject,
                     ticket.title(),
                     LocalDateTime.now().minusSeconds(30)
             );
 
             if (!recent.isEmpty()) {
                 Ticket existing = recent.get(0);
-                log.warn("Duplicate ticket creation blocked for username={} title={}",
-                        ticket.username(), ticket.title());
+                log.warn("Duplicate ticket creation blocked for ticketId={}", existing.getId());
                 return "Ticket already exists: \n" + existing.toString();
             }
 
-            Ticket saved = helpDeskService.createTicket(ticket);
+            Ticket saved = helpDeskService.createTicket(ticket, ownerSubject, ownerUsername);
 
             // Publish Kafka event
             TicketEvent event = TicketEvent.builder()
                     .eventType(TicketEvent.EventType.CREATED)
                     .ticketId(saved.getId())
                     .username(saved.getUsername())
-                    .userEmail(conversationEmailMap.getOrDefault(saved.getUsername(), ""))
+                    .userEmail(jwtUserContext.getCurrentEmail())
                     .title(saved.getTitle())
                     .description(saved.getDescription())
                     .priority(saved.getPriority())
@@ -102,7 +98,8 @@ public class BotTools {
                     .assignee(request.assignee())
                     .build();
 
-            Optional<Ticket> updated = helpDeskService.updateTicket(id, ticket);
+            String ownerSubject = jwtUserContext.getCurrentSubject();
+            Optional<Ticket> updated = helpDeskService.updateTicket(id, ownerSubject, ticket);
             if (updated.isEmpty()) return "Ticket #" + id + " not found.";
 
             Ticket saved = updated.get();
@@ -115,7 +112,7 @@ public class BotTools {
                             : TicketEvent.EventType.UPDATED)
                     .ticketId(saved.getId())
                     .username(saved.getUsername())
-                    .userEmail(conversationEmailMap.getOrDefault(saved.getUsername(), ""))
+                    .userEmail(jwtUserContext.getCurrentEmail())
                     .title(saved.getTitle())
                     .description(saved.getDescription())
                     .priority(saved.getPriority())
@@ -134,10 +131,10 @@ public class BotTools {
         }
     }
 
-    @Tool(name = "get_ticket_by_id_tool", description = "Retrieve a ticket by its database id")
+    @Tool(name = "get_ticket_by_id_tool", description = "Retrieve one of the authenticated user's tickets by its database id")
     public String getTicketByIdTool(@ToolParam(description = "Database ticket id") Long id) {
         if (id == null || id <= 0) return "Invalid ticket id provided.";
-        return helpDeskService.getTicketById(id)
+        return helpDeskService.getTicketById(id, jwtUserContext.getCurrentSubject())
                 .map(ticket -> {
                     try {
                         return new ObjectMapper().writeValueAsString(ticket);
@@ -148,11 +145,10 @@ public class BotTools {
                 .orElse("No ticket found with id " + id);
     }
 
-    @Tool(name = "get_tickets_by_username_tool", description = "Retrieve tickets by username")
-    public String getTicketByUsernameTool(@ToolParam(description = "Username") String username) {
-        if (username == null || username.isBlank()) return "Username is required.";
-        List<Ticket> tickets = helpDeskService.getTicketByUsername(username);
-        if (tickets.isEmpty()) return "No tickets found for username: " + username;
+    @Tool(name = "get_my_tickets_tool", description = "Retrieve tickets belonging to the authenticated user")
+    public String getMyTicketsTool() {
+        List<Ticket> tickets = helpDeskService.getTicketsForOwner(jwtUserContext.getCurrentSubject());
+        if (tickets.isEmpty()) return "No tickets found for your account.";
         try {
             return new ObjectMapper().writeValueAsString(tickets);
         } catch (Exception e) {
