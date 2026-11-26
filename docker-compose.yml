@@ -1,33 +1,49 @@
 services:
+  mysql:
+    image: mysql:8.4.4
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-helpdesk_bot}
+      MYSQL_USER: ${MYSQL_USER:-helpdesk}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-helpdesk_local}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-local_root_only}
+    ports:
+      - "${MYSQL_PORT:-3307}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-local_root_only}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
   kafka:
     image: apache/kafka:4.1.0
-    container_name: kafka
-
+    hostname: kafka
     ports:
-      - "9092:9092"
-
+      - "${KAFKA_PORT:-9093}:9092"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
     environment:
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
-
-      # Listeners inside the container
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
-
-      # What clients outside Docker connect to
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
-
+      KAFKA_LISTENERS: EXTERNAL://0.0.0.0:9092,INTERNAL://0.0.0.0:9094,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: EXTERNAL://localhost:${KAFKA_PORT:-9093},INTERNAL://kafka:9094
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
-
-      # Reliability settings
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT,INTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_OFFSETS_TOPIC_NUM_PARTITIONS: 50
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-      KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: 600000
-      KAFKA_LOG_INITIAL_TASK_DELAY_MS: 300000
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9094 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 15s
+      retries: 10
+      start_period: 60s
 
-      # Consumer offset settings
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+volumes:
+  mysql_data:
+  kafka_data:
