@@ -5,10 +5,13 @@ import com.akshat.ai.help_desk_bot.enums.Priority;
 import com.akshat.ai.help_desk_bot.enums.Status;
 import com.akshat.ai.help_desk_bot.service.HelpDeskService;
 import com.akshat.ai.help_desk_bot.entity.Ticket;
+import com.akshat.ai.help_desk_bot.event.TicketEvent;
 import com.akshat.ai.help_desk_bot.repository.TicketRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,14 +26,20 @@ public class HelpDeskServiceImpl implements HelpDeskService {
     private static final Logger log = LoggerFactory.getLogger(HelpDeskServiceImpl.class);
 
     private final TicketRepository ticketRepository;
+    private final TicketEventOutboxService ticketEventOutboxService;
 
     @Autowired
-    public HelpDeskServiceImpl(TicketRepository ticketRepository) {
+    public HelpDeskServiceImpl(
+            TicketRepository ticketRepository,
+            TicketEventOutboxService ticketEventOutboxService
+    ) {
         this.ticketRepository = ticketRepository;
+        this.ticketEventOutboxService = ticketEventOutboxService;
     }
 
     @Override
-    public Ticket createTicket(TicketRequest request, String ownerSubject, String ownerUsername) {
+    @Transactional
+    public Ticket createTicket(TicketRequest request, String ownerSubject, String ownerUsername, String userEmail) {
         if (request == null) throw new IllegalArgumentException("Ticket request cannot be null");
         if (ownerSubject == null || ownerSubject.isBlank()
                 || ownerUsername == null || ownerUsername.isBlank()) {
@@ -55,13 +64,14 @@ public class HelpDeskServiceImpl implements HelpDeskService {
                 .build();
 
         Ticket saved = ticketRepository.save(ticket);
+        ticketEventOutboxService.enqueue(saved, TicketEvent.EventType.CREATED, userEmail);
         log.info("Created ticket id={} username={}", saved.getId(), saved.getUsername());
         return saved;
     }
 
     @Override
     @Transactional
-    public Optional<Ticket> updateTicket(Long id, String ownerSubject, Ticket ticketUpdates) {
+    public Optional<Ticket> updateTicket(Long id, String ownerSubject, Ticket ticketUpdates, String userEmail) {
         if (id == null || id <= 0 || ownerSubject == null || ownerSubject.isBlank()) {
             return Optional.empty();
         }
@@ -126,6 +136,10 @@ public class HelpDeskServiceImpl implements HelpDeskService {
 
         // Save and return updated ticket
         Ticket saved = ticketRepository.save(t);
+        TicketEvent.EventType eventType = saved.getStatus() == Status.RESOLVED || saved.getStatus() == Status.CLOSED
+                ? TicketEvent.EventType.RESOLVED
+                : TicketEvent.EventType.UPDATED;
+        ticketEventOutboxService.enqueue(saved, eventType, userEmail);
         log.info("Updated ticket id={} changesApplied=true", saved.getId());
         return Optional.of(saved);
     }
@@ -139,9 +153,11 @@ public class HelpDeskServiceImpl implements HelpDeskService {
     }
 
     @Override
-    public List<Ticket> getTicketsForOwner(String ownerSubject) {
-        if (ownerSubject == null || ownerSubject.isBlank()) return List.of();
-        return ticketRepository.findByOwnerSubject(ownerSubject);
+    public Page<Ticket> getTicketsForOwner(String ownerSubject, Pageable pageable) {
+        if (ownerSubject == null || ownerSubject.isBlank()) {
+            throw new IllegalArgumentException("Authenticated ticket owner is required");
+        }
+        return ticketRepository.findAllByOwnerSubject(ownerSubject, pageable);
     }
 
     @Override

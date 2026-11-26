@@ -1,12 +1,11 @@
 package com.akshat.ai.help_desk_bot.tools;
 
+import com.akshat.ai.help_desk_bot.constants.IntegrationConstants;
 import com.akshat.ai.help_desk_bot.dto.TicketRequest;
 import com.akshat.ai.help_desk_bot.dto.TicketUpdateRequest;
 import com.akshat.ai.help_desk_bot.entity.Ticket;
 import com.akshat.ai.help_desk_bot.enums.Priority;
 import com.akshat.ai.help_desk_bot.enums.Status;
-import com.akshat.ai.help_desk_bot.event.TicketEvent;
-import com.akshat.ai.help_desk_bot.event.producer.TicketEventProducer;
 import com.akshat.ai.help_desk_bot.security.JwtUserContext;
 import com.akshat.ai.help_desk_bot.service.HelpDeskService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -14,6 +13,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Component;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -25,9 +26,6 @@ public class BotTools {
 
     @Autowired
     private HelpDeskService helpDeskService;
-
-    @Autowired
-    private TicketEventProducer eventProducer;
 
     @Autowired
     private JwtUserContext jwtUserContext;
@@ -52,23 +50,8 @@ public class BotTools {
                 return "Ticket already exists: \n" + existing.toString();
             }
 
-            Ticket saved = helpDeskService.createTicket(ticket, ownerSubject, ownerUsername);
-
-            // Publish Kafka event
-            TicketEvent event = TicketEvent.builder()
-                    .eventType(TicketEvent.EventType.CREATED)
-                    .ticketId(saved.getId())
-                    .username(saved.getUsername())
-                    .userEmail(jwtUserContext.getCurrentEmail())
-                    .title(saved.getTitle())
-                    .description(saved.getDescription())
-                    .priority(saved.getPriority())
-                    .status(saved.getStatus())
-                    .assignee(saved.getAssignee())
-                    .occurredAt(LocalDateTime.now())
-                    .build();
-
-            eventProducer.publishTicketCreated(event);
+            Ticket saved = helpDeskService.createTicket(
+                    ticket, ownerSubject, ownerUsername, jwtUserContext.getCurrentEmail());
 
             return saved.toString();
         } catch (Exception ex) {
@@ -99,31 +82,11 @@ public class BotTools {
                     .build();
 
             String ownerSubject = jwtUserContext.getCurrentSubject();
-            Optional<Ticket> updated = helpDeskService.updateTicket(id, ownerSubject, ticket);
+            Optional<Ticket> updated = helpDeskService.updateTicket(
+                    id, ownerSubject, ticket, jwtUserContext.getCurrentEmail());
             if (updated.isEmpty()) return "Ticket #" + id + " not found.";
 
             Ticket saved = updated.get();
-            boolean isResolved = saved.getStatus() == Status.RESOLVED
-                    || saved.getStatus() == Status.CLOSED;
-
-            TicketEvent event = TicketEvent.builder()
-                    .eventType(isResolved
-                            ? TicketEvent.EventType.RESOLVED
-                            : TicketEvent.EventType.UPDATED)
-                    .ticketId(saved.getId())
-                    .username(saved.getUsername())
-                    .userEmail(jwtUserContext.getCurrentEmail())
-                    .title(saved.getTitle())
-                    .description(saved.getDescription())
-                    .priority(saved.getPriority())
-                    .status(saved.getStatus())
-                    .assignee(saved.getAssignee() != null ? saved.getAssignee() : "Unassigned")
-                    .occurredAt(LocalDateTime.now())
-                    .build();
-
-            if (isResolved) eventProducer.publishTicketResolved(event);
-            else eventProducer.publishTicketUpdated(event);
-
             return saved.toString();
         } catch (Exception e) {
             log.error("Failed to update ticket id={}", id, e);
@@ -147,7 +110,12 @@ public class BotTools {
 
     @Tool(name = "get_my_tickets_tool", description = "Retrieve tickets belonging to the authenticated user")
     public String getMyTicketsTool() {
-        List<Ticket> tickets = helpDeskService.getTicketsForOwner(jwtUserContext.getCurrentSubject());
+        List<Ticket> tickets = helpDeskService.getTicketsForOwner(
+                        jwtUserContext.getCurrentSubject(),
+                        PageRequest.of(0, IntegrationConstants.DEFAULT_TICKET_PAGE_SIZE,
+                                Sort.by(Sort.Direction.DESC, "createdAt"))
+                )
+                .getContent();
         if (tickets.isEmpty()) return "No tickets found for your account.";
         try {
             return new ObjectMapper().writeValueAsString(tickets);

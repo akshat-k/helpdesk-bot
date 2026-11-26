@@ -70,16 +70,17 @@ NovaDesk: "Ticket #1042 has been raised. Our team will pick it up shortly."
 │        ▼               ▼                                    │
 │              MySQL Database                                 │
 │     (tickets / chat_messages / conversations /              │
-│      conversation_summaries)                                │
+│      conversation_summaries / outbox_events)                │
 │                        │                                    │
-│        TicketEventProducer                                  │
+│   Transactional Outbox Publisher                            │
 │                        │                                    │
 └────────────────────────┼────────────────────────────────────┘
                          ▼
               ┌──────────────────┐
               │  Apache Kafka    │
               │  (KRaft mode)    │
-              │  ticket-events   │
+              │ ticket topics +  │
+              │      DLTs        │
               └────────┬─────────┘
                        ▼
               ┌──────────────────┐
@@ -153,9 +154,11 @@ src/
 │   │   │   ├── AiConfig.java                    # ChatClient beans (main + summarization)
 │   │   │   ├── CorsConfig.java                  # CORS configuration for UI
 │   │   │   ├── KafkaConfig.java                 # Kafka topics + listener factory
+│   │   │   ├── OpenApiConfig.java               # Versioned API metadata + JWT scheme
 │   │   │   └── SecurityConfig.java              # OAuth2 + JWT validation
 │   │   ├── controller/
 │   │   │   ├── BotController.java               # Main chat endpoint
+│   │   │   ├── TicketController.java             # Versioned REST integration API
 │   │   │   └── DevAuthController.java           # Dev-only Google login helper
 │   │   ├── dto/
 │   │   │   ├── ChatResponse.java                # Chat API response DTO
@@ -170,7 +173,8 @@ src/
 │   │   │   ├── Status.java                      # OPEN, IN_PROGRESS, RESOLVED, CLOSED
 │   │   │   └── Priority.java                    # LOW, MEDIUM, HIGH, URGENT
 │   │   ├── event/
-│   │   │   └── TicketEvent.java                 # Kafka event DTO
+│   │   │   ├── TicketEvent.java                 # Versioned Kafka event DTO
+│   │   │   └── producer/OutboxPublisherJob.java  # Publishes committed outbox events
 │   │   ├── kafka/
 │   │   │   ├── TicketEventProducer.java         # Publishes events to Kafka topics
 │   │   │   └── TicketEventConsumer.java         # Consumes events, triggers emails
@@ -430,6 +434,38 @@ Swagger UI: `http://localhost:9191/swagger-ui.html`
 | `GET` | `/v1/ai/conversations/{id}/messages` | Get all messages in a conversation |
 | `GET` | `/v1/ai/me` | Get authenticated user info from JWT |
 
+### Versioned ticket API
+
+The authenticated REST contract is versioned under `/v1/tickets` and documented
+in OpenAPI at `/v3/api-docs` and Swagger UI at `/swagger-ui.html`. All ticket
+operations are scoped to the Google identity in the bearer token; clients cannot
+submit an owner identity.
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/v1/tickets?page=0&size=20` | List the caller's tickets (paged, newest first) |
+| `POST` | `/v1/tickets` | Create a ticket for the caller |
+| `GET` | `/v1/tickets/{id}` | Get one of the caller's tickets |
+| `PATCH` | `/v1/tickets/{id}` | Update fields on one of the caller's tickets |
+
+Create requests use `title`, `description`, and optional `priority`; update
+requests accept `title`, `description`, `priority`, `status`, and `assignee`.
+Responses omit internal owner identifiers. Requests must include a Google ID
+token in the `Authorization: Bearer <token>` header.
+
+### Reliable ticket notifications
+
+Ticket changes and notification events are written to the same database
+transaction. The outbox publisher retries failed Kafka sends with bounded
+exponential backoff and moves exhausted events to `DEAD` for operator review.
+Kafka listener failures are retried and then routed to the corresponding
+`<topic>.DLT` topic. Successful notifications are deduplicated by event ID.
+
+Delivery is at-least-once: a process crash after an email provider accepts a
+message but before the processed-event record commits can result in a duplicate
+email. SMTP delivery and a database transaction cannot provide end-to-end
+exactly-once behavior.
+
 ### Auth (Dev profile only)
 
 | Method | Endpoint | Description |
@@ -514,9 +550,11 @@ NovaDesk sends HTML emails asynchronously via Kafka when:
 ```
 Ticket action in BotTools
         ↓
-TicketEventProducer → Kafka topic (async)
+Ticket + outbox event commit together
         ↓
-TicketEventConsumer (manual ack)
+OutboxPublisherJob → Kafka topic
+        ↓
+TicketEventConsumer (record ack, bounded retries)
         ↓
 EmailService (Thymeleaf HTML rendering)
         ↓
@@ -524,6 +562,8 @@ Gmail SMTP → Employee inbox
 ```
 
 Email address is taken from the employee's Google JWT `email` claim automatically — no manual input needed.
+Events exceeding the retry budget remain in the `DEAD` outbox state for operator
+review; consumer failures are routed to each source topic's `.DLT` topic.
 
 ---
 
