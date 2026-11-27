@@ -19,6 +19,8 @@ An intelligent IT support agent built with Spring Boot and Spring AI that helps 
 - [Email Notifications](#email-notifications)
 - [Memory & Conversation Management](#memory--conversation-management)
 - [Ticket Management](#ticket-management)
+- [Integrations](integrations/README.md)
+- [Production Operations](docs/production-runbook.md)
 - [Known Limitations](#known-limitations)
 
 ---
@@ -175,9 +177,8 @@ src/
 │   │   ├── event/
 │   │   │   ├── TicketEvent.java                 # Versioned Kafka event DTO
 │   │   │   └── producer/OutboxPublisherJob.java  # Publishes committed outbox events
-│   │   ├── kafka/
-│   │   │   ├── TicketEventProducer.java         # Publishes events to Kafka topics
-│   │   │   └── TicketEventConsumer.java         # Consumes events, triggers emails
+│   │   ├── event/consumer/
+│   │   │   └── TicketEventConsumer.java          # Retries and deduplicates notifications
 │   │   ├── memory/
 │   │   │   └── DatabaseChatMemory.java          # JPA-backed ChatMemory implementation
 │   │   ├── repository/
@@ -205,7 +206,11 @@ src/
 │               └── ticket-resolved.html
 ├── .env                                         # Local secrets (never commit)
 ├── .gitignore
-└── docker-compose.yml                           # Kafka KRaft mode
+├── docker-compose.yml                           # Local MySQL + single-node Kafka
+├── docker-compose.prod.yml                      # Hardened app + rate-limited ingress
+├── integrations/                                # Reusable JS/TS client and MCP server
+├── monitoring/                                  # Prometheus scrape and alert rules
+└── docs/production-runbook.md                   # Migration and operations guide
 ```
 
 ### Frontend
@@ -453,6 +458,26 @@ requests accept `title`, `description`, `priority`, `status`, and `assignee`.
 Responses omit internal owner identifiers. Requests must include a Google ID
 token in the `Authorization: Bearer <token>` header.
 
+Operator routes are separately allowlisted by the Google `sub` values in
+`OPS_ADMIN_SUBJECTS`: `GET /v1/admin/outbox/dead` lists dead events and
+`POST /v1/admin/outbox/dead/{eventId}/replay` requeues one after investigation.
+The response omits serialized payloads.
+
+## Integrations
+
+Other projects can use the JavaScript/TypeScript Fetch client, connect through
+the MCP stdio server, or generate a client from the deployed OpenAPI contract.
+See [integration install and configuration](integrations/README.md).
+
+## Production operations
+
+Flyway owns schema migrations, Actuator/Micrometer exposes health and Prometheus
+metrics, and Micrometer Tracing exports OTLP traces. The production Compose file
+expects external managed MySQL and Kafka services; the local Compose services
+are development-only single-node infrastructure. Deployment, baseline,
+backups, alerts, rate limiting, and event replay are covered in the
+[production runbook](docs/production-runbook.md).
+
 ### Reliable ticket notifications
 
 Ticket changes and notification events are written to the same database
@@ -582,7 +607,7 @@ After every 10 messages, a dedicated summarization `ChatClient` (no memory advis
 
 ### Cleanup
 
-A scheduled job runs daily at midnight deleting messages older than 30 days. Enable by adding `@EnableScheduling` to your main application class.
+A scheduled job runs daily at midnight deleting messages older than 30 days.
 
 ---
 
@@ -637,5 +662,7 @@ Date fields (`createdAt`, `updatedAt`) are always set by `@PrePersist`/`@PreUpda
 - Gmail free tier: 500 emails/day — switch to SendGrid or AWS SES for production
 - Summarization adds slight latency on every 10th message in a conversation
 - `ConversationId` is client-provided — the React UI generates a UUID automatically per session
-- Kafka runs with replication factor 1 in local setup — increase to 3 for production
+- Local Kafka uses one broker and replication factor 1; production requires a multi-broker cluster and replication factor 3
+- Nginx request limits are local to one proxy process; use an API gateway with shared/distributed quotas when horizontally scaling ingress
+- Email notifications are at-least-once; SMTP acceptance followed by a process crash can cause a duplicate
 - llama-3.3-70b may occasionally not follow tool-calling instructions — temperature is set to 0.3 to reduce this

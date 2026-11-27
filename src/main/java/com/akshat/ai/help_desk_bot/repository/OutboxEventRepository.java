@@ -4,6 +4,8 @@ import com.akshat.ai.help_desk_bot.entity.OutboxEvent;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
@@ -27,4 +29,13 @@ public interface OutboxEventRepository extends JpaRepository<OutboxEvent, String
     );
 
     Optional<OutboxEvent> findByIdAndStatus(String id, OutboxEvent.Status status);
+
+    Page<OutboxEvent> findByStatusOrderByCreatedAtAsc(OutboxEvent.Status status, Pageable pageable);
+
+    long countByStatus(OutboxEvent.Status status);
+
+    @Query("select min(event.createdAt) from OutboxEvent event where event.status = :status")
+    Optional<LocalDateTime> findOldestCreatedAtByStatus(@Param("status") OutboxEvent.Status status);
+
+    long deleteByStatusAndPublishedAtBefore(OutboxEvent.Status status, LocalDateTime cutoff);
 }
