@@ -42,7 +42,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @Testcontainers
 @SpringBootTest(properties = {
-        "spring.ai.openai.api-key=test",
+        "spring.ai.google.genai.api-key=test",
         "spring.security.oauth2.client.registration.google.client-id=test-client",
         "app.security.allowed-domain=example.com",
         "spring.jpa.hibernate.ddl-auto=validate",

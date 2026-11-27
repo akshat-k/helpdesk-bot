@@ -21,7 +21,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 		"spring.flyway.enabled=false",
 		"spring.kafka.admin.auto-create=false",
 		"spring.kafka.listener.auto-startup=false",
-		"spring.ai.openai.api-key=test",
+		"spring.ai.google.genai.api-key=test",
 		"spring.security.oauth2.client.registration.google.client-id=test-client",
 		"app.security.allowed-domain=example.com",
 		"app.outbox.poll-interval-ms=3600000"
