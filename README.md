@@ -61,7 +61,7 @@ NovaDesk: "Ticket #1042 has been raised. Our team will pick it up shortly."
 │                   Spring Boot App                           │
 │                   http://localhost:9191                      │
 │                                                             │
-│   BotController → ChatClient → LLM (Groq llama-3.3-70b)    │
+│   BotController → ChatClient → Gemini 3.1 Flash-Lite       │
 │        │               │                                    │
 │        │         Spring AI Advisors                         │
 │        │         (Memory + Logger)                          │
@@ -107,7 +107,7 @@ NovaDesk: "Ticket #1042 has been raised. Our team will pick it up shortly."
 |---|---|
 | Framework | Spring Boot 3.5 |
 | AI Orchestration | Spring AI 1.1.x |
-| LLM | Groq (llama-3.3-70b-versatile) |
+| LLM | Google Gemini (`gemini-3.1-flash-lite`) |
 | Database | MySQL 8 |
 | ORM | Spring Data JPA / Hibernate |
 | Security | Spring Security + Google OAuth2 |
@@ -243,7 +243,7 @@ novadesk-ui/
 - Maven 3.8+
 - Docker Engine with Docker Compose
 - A Google Cloud project with OAuth2 credentials
-- A Groq API key — free at [console.groq.com](https://console.groq.com)
+- A Gemini API key from [Google AI Studio](https://aistudio.google.com/app/apikey)
 - A Gmail account with an App Password generated
 
 ### Frontend
@@ -284,7 +284,13 @@ must match the backend settings when overridden.
     - `http://localhost:9191/v1/auth/callback`
 4. Copy Client ID and Client Secret
 
-### 3. Gmail App Password
+### 3. Gemini API key
+
+Create a Gemini API key in [Google AI Studio](https://aistudio.google.com/app/apikey).
+This key is separate from the Google OAuth client ID and secret used for
+sign-in.
+
+### 4. Gmail App Password
 
 1. Go to [myaccount.google.com](https://myaccount.google.com)
 2. Search **"App Passwords"**
@@ -304,8 +310,8 @@ DB_USERNAME=helpdesk
 DB_PASSWORD=helpdesk_local
 KAFKA_BOOTSTRAP_SERVERS=localhost:9093
 
-# LLM
-GROQ_API_KEY=your_groq_api_key
+# Gemini API (separate from Google OAuth credentials)
+GEMINI_API_KEY=your_gemini_api_key
 
 # Google OAuth2
 GOOGLE_CLIENT_ID=your_google_client_id
@@ -338,12 +344,11 @@ spring.datasource.username=${DB_USERNAME}
 spring.datasource.password=${DB_PASSWORD}
 spring.jpa.hibernate.ddl-auto=update
 
-# LLM — Groq
-spring.ai.openai.api-key=${GROQ_API_KEY}
-spring.ai.openai.base-url=https://api.groq.com/openai
-spring.ai.openai.chat.options.model=llama-3.3-70b-versatile
-spring.ai.openai.chat.options.max-tokens=1000
-spring.ai.openai.chat.options.temperature=0.3
+# LLM — Google Gemini
+spring.ai.google.genai.api-key=${GEMINI_API_KEY}
+spring.ai.google.genai.chat.options.model=gemini-3.1-flash-lite
+spring.ai.google.genai.chat.options.max-output-tokens=2048
+spring.ai.google.genai.chat.options.temperature=0.3
 
 # Google OAuth2 — GOOGLE_CLIENT_ID is also the required JWT audience
 spring.security.oauth2.client.registration.google.client-id=${GOOGLE_CLIENT_ID}
@@ -658,11 +663,10 @@ Date fields (`createdAt`, `updatedAt`) are always set by `@PrePersist`/`@PreUpda
 ## Known Limitations
 
 - Google `id_token` expires in **1 hour** — re-login required after expiry
-- Groq free tier: 1,000 requests/day, 12,000 tokens/minute
+- Gemini API quotas and pricing depend on your Google AI plan and region
 - Gmail free tier: 500 emails/day — switch to SendGrid or AWS SES for production
 - Summarization adds slight latency on every 10th message in a conversation
 - `ConversationId` is client-provided — the React UI generates a UUID automatically per session
 - Local Kafka uses one broker and replication factor 1; production requires a multi-broker cluster and replication factor 3
 - Nginx request limits are local to one proxy process; use an API gateway with shared/distributed quotas when horizontally scaling ingress
 - Email notifications are at-least-once; SMTP acceptance followed by a process crash can cause a duplicate
-- llama-3.3-70b may occasionally not follow tool-calling instructions — temperature is set to 0.3 to reduce this
