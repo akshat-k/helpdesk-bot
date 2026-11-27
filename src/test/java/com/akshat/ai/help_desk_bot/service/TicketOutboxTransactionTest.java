@@ -14,6 +14,7 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -31,6 +32,7 @@ import static org.junit.jupiter.api.Assertions.*;
         "app.kafka.topics.ticket-updated=ticket-updated",
         "app.kafka.topics.ticket-resolved=ticket-resolved"
 })
+@TestPropertySource(properties = "spring.flyway.enabled=false")
 @Import({HelpDeskServiceImpl.class, TicketEventOutboxService.class, TicketOutboxTransactionTest.TestConfig.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class TicketOutboxTransactionTest {
